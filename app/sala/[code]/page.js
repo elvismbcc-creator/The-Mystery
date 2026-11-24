@@ -4,8 +4,8 @@ import {useParams,useRouter} from "next/navigation";
 import {QRCodeSVG} from "qrcode.react";
 import {sb,ensureUser} from "@/lib/supabase";
 import {Portrait} from "@/lib/Portrait";
-import {sfx,musicOn,musicOff,unlock} from "@/lib/sound";
-import {CATS,SUSPECTS,WEAPONS,ROOMS,MARKS,COLORS,MIN_PLAYERS} from "@/lib/data";
+import {sfx,musicOn,musicOff,unlock,speak} from "@/lib/sound";
+import {CATS,SUSPECTS,WEAPONS,ROOMS,MARKS,COLORS,MIN_PLAYERS,ICONS} from "@/lib/data";
 
 const MC=["text-stone-600","text-green-400","text-red-500","text-gold"];
 const EMOJIS=["👀","😱","🔍","🤔","😏","👏"];
@@ -19,6 +19,33 @@ function Confetti(){
   return <div className="pointer-events-none fixed inset-0 overflow-hidden">{a.map((x,i)=><span key={i} className="absolute h-3 w-2" style={{left:x.l+"%",top:"-5%",background:x.c,animation:`fall ${x.t}s linear ${x.d}s infinite`}}/>)}</div>;
 }
 const Dot=({c})=><Portrait c={c} size={30}/>;
+function Face({kind,name,delay=0}){
+  const bf={backfaceVisibility:"hidden",WebkitBackfaceVisibility:"hidden"};
+  return(
+    <div style={{perspective:700,width:96,height:140}}>
+      <div style={{position:"relative",width:"100%",height:"100%",transformStyle:"preserve-3d",animation:`flipin .8s ${delay}s both`}}>
+        <div style={bf} className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl border border-gold bg-coal p-1 text-center shadow-[0_0_20px_rgba(201,162,75,.35)]">
+          {kind==="s"?<Portrait c={name} size={64}/>:<span className="text-5xl">{ICONS[name]}</span>}
+          <span className="text-[11px] leading-tight text-gold">{name}</span>
+        </div>
+        <div style={{...bf,transform:"rotateY(180deg)"}} className="absolute inset-0 flex items-center justify-center rounded-xl border border-gold bg-gradient-to-b from-wine to-ink font-serif text-4xl text-gold">?</div>
+      </div>
+    </div>
+  );
+}
+function QuestionAnim({q,from,to,onClose}){
+  return(
+    <div onClick={onClose} className="fixed inset-0 z-[65] flex flex-col items-center justify-center gap-6 p-4 text-center" style={{background:"radial-gradient(circle at 50% 35%,rgba(201,162,75,.25),rgba(0,0,0,.95) 60%)"}}>
+      <p className="fade font-serif text-xl text-gold"><b>{from}</b> pregunta a <b>{to}</b></p>
+      <div className="flex gap-3"><Face kind="s" name={q.suspect} delay={0.6}/><Face kind="w" name={q.weapon} delay={1.6}/><Face kind="r" name={q.room} delay={2.6}/></div>
+      <p className="max-w-xs font-serif text-lg" style={{animation:"up .6s 3.5s both"}}>¿Fue {q.suspect}, con {q.weapon}, en {q.room}?</p>
+    </div>
+  );
+}
+function Rain(){
+  const [d]=useState(()=>Array.from({length:45},()=>({l:Math.random()*100,t:0.7+Math.random()*0.8,dl:Math.random()*2})));
+  return <div className="rain pointer-events-none fixed inset-0 z-0 overflow-hidden">{d.map((x,i)=><span key={i} className="absolute top-0 h-10 w-px" style={{left:x.l+"%",background:"linear-gradient(transparent,rgba(186,214,255,.35))",animation:`rain ${x.t}s linear ${x.dl}s infinite`}}/>)}</div>;
+}
 function Triple({v,set}){
   return <>{[["suspect","Sospechoso",SUSPECTS],["weapon","Arma",WEAPONS],["room","Habitación",ROOMS]].map(([k,l,o])=>(
     <select key={k} className="inp" value={v[k]} onChange={e=>set({...v,[k]:e.target.value})}><option value="">{l}…</option>{o.map(x=><option key={x}>{x}</option>)}</select>))}</>;
@@ -33,7 +60,8 @@ export default function Sala(){
   const [ready,setReady]=useState(false),[busy,setBusy]=useState(false),[acc,setAcc]=useState(null),[env,setEnv]=useState(null);
   const [askTo,setAskTo]=useState(""),[askCards,setAskCards]=useState(EMPTY),[reply,setReply]=useState(""),[toast,setToast]=useState(null),[fly,setFly]=useState([]);
   const [name,setName]=useState(""),[chr,setChr]=useState("");
-  const [sound,setSound]=useState(true),[music,setMusic]=useState(false);
+  const [sound,setSound]=useState(true),[music,setMusic]=useState(false),[voice,setVoice]=useState(true),[rain,setRain]=useState(true),[qAnim,setQAnim]=useState(null),[flash,setFlash]=useState(false);
+  const seenQ=useRef(null);
   const prevStatus=useRef(null);
   const play=n=>{if(sound)sfx[n]();};
   const seen=useRef(null),timer=useRef(null),chRef=useRef(null),lastReact=useRef(0);
@@ -45,6 +73,7 @@ export default function Sala(){
       sb.from("questions").select("*").eq("room_code",code).order("created_at"),
       sb.from("answers").select("question_id,text").eq("room_code",code)]);
     setRoom(r.data);setPlayers(p.data||[]);setQs(q.data||[]);
+    if(seenQ.current===null)seenQ.current=(q.data||[]).slice(-1)[0]?.id||0;
     setAns(Object.fromEntries((a.data||[]).map(x=>[x.question_id,x.text])));
   },[code]);
 
@@ -95,25 +124,35 @@ export default function Sala(){
     const e=room?.last_event;if(!e)return;
     if(seen.current===null){seen.current=e.id;return;}
     if(e.id===seen.current)return;seen.current=e.id;
-    if(e.type==="wrong"){play("wrong");setToast(e);setTimeout(()=>setToast(null),4500);}
+    if(e.type==="wrong"){play("wrong");if(sound)sfx.thunder();setFlash(true);setTimeout(()=>setFlash(false),900);if(voice)speak(`Acusación incorrecta. ${e.name} queda eliminado.`);setToast(e);setTimeout(()=>setToast(null),4500);}
     if(e.type==="rematch"){setNotes({c:{},t:{}});setTab("sala");setAcc(null);setEnv(null);}
   },[room]);
 
   const inboxId=qs.find(q=>q.to_id===uid&&!q.answered)?.id;
   useEffect(()=>{
-    try{setSound(localStorage.getItem("tm_sound")!=="0");}catch{}
+    try{setSound(localStorage.getItem("tm_sound")!=="0");setVoice(localStorage.getItem("tm_voice")!=="0");setRain(localStorage.getItem("tm_rain")!=="0");}catch{}
     window.addEventListener("pointerdown",unlock,{once:true});
     return()=>musicOff();
   },[]);
   useEffect(()=>{
     const st=room?.status;
-    if(prevStatus.current&&prevStatus.current!=="finished"&&st==="finished")play(room.winner_name?"win":"wrong");
+    if(prevStatus.current&&prevStatus.current!=="finished"&&st==="finished"){
+      play(room.winner_name?"win":"wrong");
+      if(voice)speak(room.winner_name?`Caso resuelto. ${room.winner_name} ha resuelto el misterio. Fue ${room.solution?.suspect}, con ${room.solution?.weapon}, en ${room.solution?.room}.`:"Caso sin resolver.");
+    }
     if(st)prevStatus.current=st;
   },[room?.status]); // eslint-disable-line
   useEffect(()=>{
-    if(!inboxId)return;play("ask");
+    if(!inboxId)return;
     try{if(navigator.vibrate)navigator.vibrate([200,100,200]);}catch{}
   },[inboxId]); // eslint-disable-line
+  const lastQ=qs[qs.length-1];
+  useEffect(()=>{
+    if(!lastQ||seenQ.current===null||lastQ.id===seenQ.current)return;
+    seenQ.current=lastQ.id;setQAnim(lastQ);play("ask");
+    if(voice)speak(`${pname(lastQ.from_id)} pregunta a ${pname(lastQ.to_id)}. ¿Fue ${lastQ.suspect}, con ${lastQ.weapon}, en ${lastQ.room}?`);
+    const t=setTimeout(()=>setQAnim(null),5500);return()=>clearTimeout(t);
+  },[lastQ?.id]); // eslint-disable-line
   const upd=fn=>{const n=fn(notes);setNotes(n);clearTimeout(timer.current);timer.current=setTimeout(()=>sb.from("notes").upsert({room_code:code,player_id:uid,data:n}),500);};
   const act=async(path,body={},after)=>{setBusy(true);setMsg("");try{await call(path,{code,...body});if(after)after();}catch(e){setMsg(e.message);}setBusy(false);};
   const join=async()=>{
@@ -166,15 +205,19 @@ export default function Sala(){
     <div className="card space-y-2"><h2 className="font-serif text-lg text-gold">Marcador</h2>
       {board.map(p=><div key={p.id} className="flex items-center gap-2"><Portrait c={p.character} size={24}/><span className="flex-1">{p.name}</span><span className="text-gold">{p.wins||0}</span></div>)}</div>):null;
   return(
-    <main className={`mx-auto px-4 py-5 pb-24 ${tab==="libreta"?"max-w-2xl":"max-w-md"} fade`}>
-      <header className="mb-4 flex items-center justify-between">
+    <>
+    {rain&&tab!=="libreta"&&<Rain/>}
+    <main className={`relative z-10 mx-auto px-4 py-5 pb-24 ${tab==="libreta"?"max-w-2xl":"max-w-md"} fade`}>
+      <header className="mb-2 flex items-center justify-between">
         <h1 className="font-serif text-2xl font-bold tracking-widest text-gold">THE MYSTERY</h1>
-        <div className="flex items-center gap-2">
-          <button title="Sonidos" className="text-lg" onClick={()=>{const v=!sound;setSound(v);try{localStorage.setItem("tm_sound",v?"1":"0");}catch{}unlock();}}>{sound?"🔊":"🔇"}</button>
-          <button title="Música de fondo" className="text-lg" onClick={()=>{if(music){musicOff();setMusic(false);}else{musicOn();setMusic(true);}}}><span className={music?"":"opacity-40"}>🎵</span></button>
-          <span className="rounded border border-gold/40 px-2 py-1 text-sm tracking-widest text-gold">{code}</span>
-        </div>
+        <span className="rounded border border-gold/40 px-2 py-1 text-sm tracking-widest text-gold">{code}</span>
       </header>
+      <div className="mb-4 flex justify-center gap-5 text-xl">
+        <button title="Sonidos" onClick={()=>{const v=!sound;setSound(v);try{localStorage.setItem("tm_sound",v?"1":"0");}catch{}unlock();}}>{sound?"🔊":"🔇"}</button>
+        <button title="Música de fondo" onClick={()=>{if(music){musicOff();setMusic(false);}else{musicOn();setMusic(true);}}}><span className={music?"":"opacity-40"}>🎵</span></button>
+        <button title="Voz narradora" onClick={()=>{const v=!voice;setVoice(v);try{localStorage.setItem("tm_voice",v?"1":"0");}catch{}unlock();}}><span className={voice?"":"opacity-40"}>🗣️</span></button>
+        <button title="Lluvia" onClick={()=>{const v=!rain;setRain(v);try{localStorage.setItem("tm_rain",v?"1":"0");}catch{}}}><span className={rain?"":"opacity-40"}>🌧️</span></button>
+      </div>
       {info&&<p className="mb-3 text-center text-sm text-gold">{info}</p>}
       {msg&&<p className="mb-3 text-center text-sm text-red-400">{msg}</p>}
 
@@ -311,10 +354,12 @@ export default function Sala(){
       {room.status==="finished"&&(
         <div className="fixed inset-0 z-[60] overflow-y-auto bg-ink/95">
           {room.winner_name&&<Confetti/>}
+          {room.winner_name&&<div className="pointer-events-none absolute inset-0 overflow-hidden"><div className="absolute left-1/2 top-1/3 h-[200vmax] w-[200vmax] opacity-25" style={{transform:"translate(-50%,-50%)",background:"repeating-conic-gradient(from 0deg,#c9a24b 0 8deg,transparent 8deg 24deg)",animation:"rays 40s linear infinite",WebkitMaskImage:"radial-gradient(circle,#000 0,transparent 55%)",maskImage:"radial-gradient(circle,#000 0,transparent 55%)"}}/></div>}
           <div className="flex min-h-full flex-col items-center justify-center gap-4 p-6 text-center">
-            <h2 className="font-serif text-4xl font-bold text-gold fade">{room.winner_name?"¡CASO RESUELTO!":"CASO SIN RESOLVER"}</h2>
-            {room.winner_name&&<p className="text-xl">{room.winner_name}</p>}
-            {room.solution&&<div className="card text-lg">{room.solution.suspect}<br/>con {room.solution.weapon}<br/>en {room.solution.room}</div>}
+            {room.winner_name&&<div className="text-6xl" style={{animation:"pop 1s .1s both"}}>🔍</div>}
+            <h2 className="font-serif text-4xl font-bold text-gold" style={{animation:"stamp .7s .3s both"}}>{room.winner_name?"¡CASO RESUELTO!":"CASO SIN RESOLVER"}</h2>
+            {room.winner_name&&<p className="fade text-xl">{room.winner_name}</p>}
+            {room.solution&&<div className="flex gap-3"><Face kind="s" name={room.solution.suspect} delay={1.2}/><Face kind="w" name={room.solution.weapon} delay={2}/><Face kind="r" name={room.solution.room} delay={2.8}/></div>}
             <div className="card w-full max-w-sm space-y-2 text-left text-sm">
               <h3 className="font-serif text-lg text-gold">Resumen</h3>
               {duration!==null&&<p>Duración: {duration} min</p>}
@@ -336,6 +381,9 @@ export default function Sala(){
         <div className="fixed bottom-3 left-1/2 z-30 flex -translate-x-1/2 gap-1 rounded-full border border-gold/30 bg-coal/95 px-3 py-1">
           {EMOJIS.map(e=><button key={e} className="p-1 text-2xl transition active:scale-125" onClick={()=>react(e)}>{e}</button>)}
         </div>)}
+      {qAnim&&<QuestionAnim q={qAnim} from={pname(qAnim.from_id)} to={pname(qAnim.to_id)} onClose={()=>setQAnim(null)}/>}
+      {flash&&<div className="pointer-events-none fixed inset-0 z-[80] bg-white" style={{animation:"flash .9s ease-out both"}}/>}
     </main>
+    </>
   );
 }
