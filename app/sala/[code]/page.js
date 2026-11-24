@@ -4,6 +4,8 @@ import {useParams,useRouter} from "next/navigation";
 import {QRCodeSVG} from "qrcode.react";
 import {sb,ensureUser} from "@/lib/supabase";
 import {Portrait} from "@/lib/Portrait";
+import {Art} from "@/lib/Art";
+import {Rain,Candles,Curtain} from "@/lib/fx";
 import {sfx,musicOn,musicOff,unlock,speak} from "@/lib/sound";
 import {CATS,SUSPECTS,WEAPONS,ROOMS,MARKS,COLORS,MIN_PLAYERS,ICONS} from "@/lib/data";
 
@@ -25,7 +27,7 @@ function Face({kind,name,delay=0}){
     <div style={{perspective:700,width:96,height:140}}>
       <div style={{position:"relative",width:"100%",height:"100%",transformStyle:"preserve-3d",animation:`flipin .8s ${delay}s both`}}>
         <div style={bf} className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl border border-gold bg-coal p-1 text-center shadow-[0_0_20px_rgba(201,162,75,.35)]">
-          {kind==="s"?<Portrait c={name} size={64}/>:<span className="text-5xl">{ICONS[name]}</span>}
+          {kind==="s"?<Portrait c={name} size={64}/>:<Art name={name} size={64}/>}
           <span className="text-[11px] leading-tight text-gold">{name}</span>
         </div>
         <div style={{...bf,transform:"rotateY(180deg)"}} className="absolute inset-0 flex items-center justify-center rounded-xl border border-gold bg-gradient-to-b from-wine to-ink font-serif text-4xl text-gold">?</div>
@@ -42,10 +44,6 @@ function QuestionAnim({q,from,to,onClose}){
     </div>
   );
 }
-function Rain(){
-  const [d]=useState(()=>Array.from({length:45},()=>({l:Math.random()*100,t:0.7+Math.random()*0.8,dl:Math.random()*2})));
-  return <div className="rain pointer-events-none fixed inset-0 z-0 overflow-hidden">{d.map((x,i)=><span key={i} className="absolute top-0 h-10 w-px" style={{left:x.l+"%",background:"linear-gradient(transparent,rgba(186,214,255,.35))",animation:`rain ${x.t}s linear ${x.dl}s infinite`}}/>)}</div>;
-}
 function Triple({v,set}){
   return <>{[["suspect","Sospechoso",SUSPECTS],["weapon","Arma",WEAPONS],["room","Habitación",ROOMS]].map(([k,l,o])=>(
     <select key={k} className="inp" value={v[k]} onChange={e=>set({...v,[k]:e.target.value})}><option value="">{l}…</option>{o.map(x=><option key={x}>{x}</option>)}</select>))}</>;
@@ -60,7 +58,7 @@ export default function Sala(){
   const [ready,setReady]=useState(false),[busy,setBusy]=useState(false),[acc,setAcc]=useState(null),[env,setEnv]=useState(null);
   const [askTo,setAskTo]=useState(""),[askCards,setAskCards]=useState(EMPTY),[reply,setReply]=useState(""),[toast,setToast]=useState(null),[fly,setFly]=useState([]);
   const [name,setName]=useState(""),[chr,setChr]=useState("");
-  const [sound,setSound]=useState(true),[music,setMusic]=useState(false),[voice,setVoice]=useState(true),[rain,setRain]=useState(true),[qAnim,setQAnim]=useState(null),[flash,setFlash]=useState(false);
+  const [sound,setSound]=useState(true),[music,setMusic]=useState(false),[voice,setVoice]=useState(true),[rain,setRain]=useState(true),[qAnim,setQAnim]=useState(null),[flash,setFlash]=useState(false),[curtain,setCurtain]=useState(false);
   const seenQ=useRef(null);
   const prevStatus=useRef(null);
   const play=n=>{if(sound)sfx[n]();};
@@ -136,6 +134,7 @@ export default function Sala(){
   },[]);
   useEffect(()=>{
     const st=room?.status;
+    if(prevStatus.current==="lobby"&&st==="playing")setCurtain(true);
     if(prevStatus.current&&prevStatus.current!=="finished"&&st==="finished"){
       play(room.winner_name?"win":"wrong");
       if(voice)speak(room.winner_name?`Caso resuelto. ${room.winner_name} ha resuelto el misterio. Fue ${room.solution?.suspect}, con ${room.solution?.weapon}, en ${room.solution?.room}.`:"Caso sin resolver.");
@@ -207,6 +206,7 @@ export default function Sala(){
   return(
     <>
     {rain&&tab!=="libreta"&&<Rain/>}
+    {tab!=="libreta"&&<Candles/>}
     <main className={`relative z-10 mx-auto px-4 py-5 pb-24 ${tab==="libreta"?"max-w-2xl":"max-w-md"} fade`}>
       <header className="mb-2 flex items-center justify-between">
         <h1 className="font-serif text-2xl font-bold tracking-widest text-gold">THE MYSTERY</h1>
@@ -254,7 +254,7 @@ export default function Sala(){
           <button key={k} onClick={()=>setTab(k)} className={`rounded-lg py-2 font-serif text-sm transition ${tab===k?"bg-wine text-gold":"border border-gold/20 text-stone-400"}`}>{l}{k==="preguntas"&&inbox?" ●":""}</button>))}</nav>
 
         {tab==="sala"&&(
-          <div className="space-y-5">
+          <div key="sala" className="fade space-y-5">
             <div className="card space-y-3"><h2 className="font-serif text-lg text-gold">Jugadores</h2><PlayerList/></div>
             <details className="card"><summary className="cursor-pointer text-gold">Invitar con QR</summary><div className="mt-4"><Qr/></div></details>
             {boardCard}
@@ -262,7 +262,7 @@ export default function Sala(){
           </div>)}
 
         {tab==="preguntas"&&(
-          <div className="space-y-5">
+          <div key="preguntas" className="fade space-y-5">
             <div className="card space-y-3">
               <h2 className="font-serif text-lg text-gold">Hacer una pregunta</h2>
               <select className="inp" value={askTo} onChange={e=>setAskTo(e.target.value)}><option value="">¿A quién?…</option>{others.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
@@ -283,12 +283,12 @@ export default function Sala(){
           </div>)}
 
         {tab==="libreta"&&(
-          <div className="space-y-3">
+          <div key="libreta" className="fade space-y-3">
             <p className="text-center text-xs text-stone-400">Toca una casilla para cambiar: ○ sin marcar · ✓ confirmado · ✕ descartado · ★ posible solución. Solo tú ves esta libreta.</p>
-            <div className="overflow-x-auto rounded-xl border border-gold/30">
+            <div className="ornate overflow-x-auto rounded-xl">
               <table className="w-full border-collapse text-sm">
-                <thead><tr className="bg-coal">
-                  <th className="sticky left-0 z-10 bg-coal p-2 text-left font-serif text-gold">Carta</th>
+                <thead><tr className="bg-[#1c1510]">
+                  <th className="sticky left-0 z-10 bg-[#1c1510] p-2 text-left font-serif text-gold">Carta</th>
                   {players.map(p=><th key={p.id} className="p-1 text-[11px] font-medium" style={{color:COLORS[p.character]}}><div className="flex flex-col items-center gap-0.5"><Portrait c={p.character} size={22}/>{p.id===uid?"Yo":p.name.slice(0,7)}</div></th>)}
                   <th className="p-2 text-left font-serif text-gold">Notas</th></tr></thead>
                 <tbody>{CATS.map(([cat,items])=>(
@@ -296,7 +296,7 @@ export default function Sala(){
                     <tr><td colSpan={players.length+2} className="bg-wine/50 p-2 font-serif text-xs tracking-widest text-gold">{cat}</td></tr>
                     {items.map(it=>(
                       <tr key={it} className="border-t border-gold/10">
-                        <td className="sticky left-0 z-10 w-28 bg-ink p-2 text-xs">{it}</td>
+                        <td className="sticky left-0 z-10 w-28 bg-[#1c1510] p-2 text-xs">{it}</td>
                         {players.map(p=>{
                           const k=`${it}|${p.id}`;const v=notes.c[k]||0;
                           return <td key={p.id} className="text-center"><button onClick={()=>upd(n=>({...n,c:{...n.c,[k]:((n.c[k]||0)+1)%4}}))} className={`h-11 w-11 text-xl transition active:scale-90 ${MC[v]}`}>{MARKS[v]}</button></td>;
@@ -382,6 +382,7 @@ export default function Sala(){
           {EMOJIS.map(e=><button key={e} className="p-1 text-2xl transition active:scale-125" onClick={()=>react(e)}>{e}</button>)}
         </div>)}
       {qAnim&&<QuestionAnim q={qAnim} from={pname(qAnim.from_id)} to={pname(qAnim.to_id)} onClose={()=>setQAnim(null)}/>}
+      {curtain&&<Curtain onDone={()=>setCurtain(false)}/>}
       {flash&&<div className="pointer-events-none fixed inset-0 z-[80] bg-white" style={{animation:"flash .9s ease-out both"}}/>}
     </main>
     </>
