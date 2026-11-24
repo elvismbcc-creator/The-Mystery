@@ -7,6 +7,6 @@ export async function POST(req){
   if(!room.has_envelope)return fail("Falta elegir el sobre");
   const {count}=await admin.from("players").select("id",{count:"exact",head:true}).eq("room_code",room.code);
   if((count||0)<MIN_PLAYERS)return fail(`Se necesitan al menos ${MIN_PLAYERS} jugadores`);
-  await admin.from("rooms").update({status:"playing",last_event:{id:Date.now(),type:"start"}}).eq("code",room.code);
+  await admin.from("rooms").update({status:"playing",started_at:new Date().toISOString(),finished_at:null,last_event:{id:Date.now(),type:"start"}}).eq("code",room.code);
   return ok();
 }

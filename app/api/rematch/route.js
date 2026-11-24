@@ -7,7 +7,7 @@ export async function POST(req){
   await admin.from("questions").delete().eq("room_code",code);
   await admin.from("secrets").delete().eq("room_code",code);
   await admin.from("notes").delete().eq("room_code",code);
-  await admin.from("players").update({eliminated:false}).eq("room_code",code);
-  await admin.from("rooms").update({status:"lobby",has_envelope:false,winner_name:null,solution:null,last_event:{id:Date.now(),type:"rematch"}}).eq("code",code);
+  await admin.from("players").update({eliminated:false,eliminated_at:null}).eq("room_code",code);
+  await admin.from("rooms").update({status:"lobby",started_at:null,finished_at:null,has_envelope:false,winner_name:null,solution:null,last_event:{id:Date.now(),type:"rematch"}}).eq("code",code);
   return ok();
 }

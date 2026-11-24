@@ -6,14 +6,15 @@ export async function POST(req){
   const {data:s}=await admin.from("secrets").select("*").eq("room_code",room.code).maybeSingle();
   if(!s)return fail("No hay sobre");
   const sol={suspect:s.suspect,weapon:s.weapon,room:s.room};
-  const id=Date.now();
+  const id=Date.now();const now=new Date().toISOString();
   if(s.suspect===body.suspect&&s.weapon===body.weapon&&s.room===body.room){
-    await admin.from("rooms").update({status:"finished",winner_name:me.name,solution:sol,last_event:{id,type:"win",name:me.name}}).eq("code",room.code);
+    await admin.from("rooms").update({status:"finished",finished_at:now,winner_name:me.name,solution:sol,last_event:{id,type:"win",name:me.name}}).eq("code",room.code);
+    await admin.from("players").update({wins:(me.wins||0)+1}).eq("room_code",room.code).eq("id",u.id);
     return ok({correct:true});
   }
-  await admin.from("players").update({eliminated:true}).eq("room_code",room.code).eq("id",u.id);
+  await admin.from("players").update({eliminated:true,eliminated_at:now}).eq("room_code",room.code).eq("id",u.id);
   const {count}=await admin.from("players").select("id",{count:"exact",head:true}).eq("room_code",room.code).eq("eliminated",false);
-  if(!count)await admin.from("rooms").update({status:"finished",winner_name:null,solution:sol,last_event:{id,type:"lose"}}).eq("code",room.code);
+  if(!count)await admin.from("rooms").update({status:"finished",finished_at:now,winner_name:null,solution:sol,last_event:{id,type:"lose"}}).eq("code",room.code);
   else await admin.from("rooms").update({last_event:{id,type:"wrong",name:me.name}}).eq("code",room.code);
   return ok({correct:false});
 }

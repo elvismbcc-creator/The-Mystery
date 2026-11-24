@@ -3,8 +3,8 @@ import {Fragment,useCallback,useEffect,useRef,useState} from "react";
 import {useParams,useRouter} from "next/navigation";
 import {QRCodeSVG} from "qrcode.react";
 import {sb,ensureUser} from "@/lib/supabase";
-import {initAudio,play,startMusic,stopMusic,getPrefs,setPref} from "@/lib/sfx";
-import Portrait from "@/lib/Portrait";
+import {Portrait} from "@/lib/Portrait";
+import {sfx,musicOn,musicOff,unlock} from "@/lib/sound";
 import {CATS,SUSPECTS,WEAPONS,ROOMS,MARKS,COLORS,MIN_PLAYERS} from "@/lib/data";
 
 const MC=["text-stone-600","text-green-400","text-red-500","text-gold"];
@@ -18,7 +18,7 @@ function Confetti(){
   const [a]=useState(()=>Array.from({length:70},(_,i)=>({l:Math.random()*100,d:Math.random()*2,t:2.5+Math.random()*2.5,c:["#c9a24b","#e8c766","#f5e3a1","#9b1c2e"][i%4]})));
   return <div className="pointer-events-none fixed inset-0 overflow-hidden">{a.map((x,i)=><span key={i} className="absolute h-3 w-2" style={{left:x.l+"%",top:"-5%",background:x.c,animation:`fall ${x.t}s linear ${x.d}s infinite`}}/>)}</div>;
 }
-const Dot=({c})=><span className="inline-block h-3 w-3 rounded-full" style={{background:COLORS[c]}}/>;
+const Dot=({c})=><Portrait c={c} size={30}/>;
 function Triple({v,set}){
   return <>{[["suspect","Sospechoso",SUSPECTS],["weapon","Arma",WEAPONS],["room","Habitación",ROOMS]].map(([k,l,o])=>(
     <select key={k} className="inp" value={v[k]} onChange={e=>set({...v,[k]:e.target.value})}><option value="">{l}…</option>{o.map(x=><option key={x}>{x}</option>)}</select>))}</>;
@@ -33,7 +33,9 @@ export default function Sala(){
   const [ready,setReady]=useState(false),[busy,setBusy]=useState(false),[acc,setAcc]=useState(null),[env,setEnv]=useState(null);
   const [askTo,setAskTo]=useState(""),[askCards,setAskCards]=useState(EMPTY),[reply,setReply]=useState(""),[toast,setToast]=useState(null),[fly,setFly]=useState([]);
   const [name,setName]=useState(""),[chr,setChr]=useState("");
-  const [sfx,setSfx]=useState(true),[music,setMusic]=useState(true);
+  const [sound,setSound]=useState(true),[music,setMusic]=useState(false);
+  const prevStatus=useRef(null);
+  const play=n=>{if(sound)sfx[n]();};
   const seen=useRef(null),timer=useRef(null),chRef=useRef(null),lastReact=useRef(0);
 
   const refresh=useCallback(async()=>{
@@ -56,7 +58,7 @@ export default function Sala(){
           .on(...pc("rooms",`code=eq.${code}`)).on(...pc("players",`room_code=eq.${code}`))
           .on(...pc("questions",`room_code=eq.${code}`)).on(...pc("answers",`room_code=eq.${code}`))
           .on("broadcast",{event:"react"},({payload})=>{
-            play("react");const id=Math.random();setFly(f=>[...f,{...payload,id,l:8+Math.random()*80}]);
+            const id=Math.random();setFly(f=>[...f,{...payload,id,l:8+Math.random()*80}]);
             setTimeout(()=>setFly(f=>f.filter(x=>x.id!==id)),3200);})
           .subscribe();
         chRef.current=ch;
@@ -94,12 +96,24 @@ export default function Sala(){
     if(seen.current===null){seen.current=e.id;return;}
     if(e.id===seen.current)return;seen.current=e.id;
     if(e.type==="wrong"){play("wrong");setToast(e);setTimeout(()=>setToast(null),4500);}
-    if(e.type==="start")play("start");
-    if(e.type==="win")play("win");
-    if(e.type==="lose")play("lose");
     if(e.type==="rematch"){setNotes({c:{},t:{}});setTab("sala");setAcc(null);setEnv(null);}
   },[room]);
 
+  const inboxId=qs.find(q=>q.to_id===uid&&!q.answered)?.id;
+  useEffect(()=>{
+    try{setSound(localStorage.getItem("tm_sound")!=="0");}catch{}
+    window.addEventListener("pointerdown",unlock,{once:true});
+    return()=>musicOff();
+  },[]);
+  useEffect(()=>{
+    const st=room?.status;
+    if(prevStatus.current&&prevStatus.current!=="finished"&&st==="finished")play(room.winner_name?"win":"wrong");
+    if(st)prevStatus.current=st;
+  },[room?.status]); // eslint-disable-line
+  useEffect(()=>{
+    if(!inboxId)return;play("ask");
+    try{if(navigator.vibrate)navigator.vibrate([200,100,200]);}catch{}
+  },[inboxId]); // eslint-disable-line
   const upd=fn=>{const n=fn(notes);setNotes(n);clearTimeout(timer.current);timer.current=setTimeout(()=>sb.from("notes").upsert({room_code:code,player_id:uid,data:n}),500);};
   const act=async(path,body={},after)=>{setBusy(true);setMsg("");try{await call(path,{code,...body});if(after)after();}catch(e){setMsg(e.message);}setBusy(false);};
   const join=async()=>{
@@ -118,17 +132,6 @@ export default function Sala(){
     chRef.current?.send({type:"broadcast",event:"react",payload:{emoji,name:me?.name||""}});
   };
 
-  const inboxId=qs.find(q=>q.to_id===uid&&!q.answered)?.id;
-  useEffect(()=>{if(inboxId&&room?.status==="playing")play("inbox");},[inboxId]); // eslint-disable-line
-  useEffect(()=>{
-    const p=getPrefs();setSfx(p.sfx);setMusic(p.music);
-    const first=()=>{initAudio();if(getPrefs().music)startMusic();window.removeEventListener("pointerdown",first);};
-    window.addEventListener("pointerdown",first);
-    return()=>{window.removeEventListener("pointerdown",first);stopMusic();};
-  },[]);
-  const toggleSfx=()=>{initAudio();const v=!sfx;setSfx(v);setPref("sfx",v);};
-  const toggleMusic=()=>{initAudio();const v=!music;setMusic(v);setPref("music",v);if(v)startMusic();else stopMusic();};
-
   if(!ready)return <main className="p-10 text-center text-stone-400">Abriendo el expediente…</main>;
   if(!room)return <main className="mx-auto max-w-sm space-y-4 p-10 text-center"><p>{msg||`No existe la sala ${code}. Revisa el código.`}</p><button className="btn2" onClick={()=>router.push("/")}>Volver al inicio</button></main>;
 
@@ -137,15 +140,11 @@ export default function Sala(){
   const pending=qs.some(q=>!q.answered);
   const others=players.filter(p=>p.id!==uid);
   const lobby=room.status==="lobby";
-  const stats=players.map(p=>({p,asked:qs.filter(q=>q.from_id===p.id).length,got:qs.filter(q=>q.to_id===p.id&&q.answered).length}));
-  const ranked=[...stats].sort((a,b)=>(Number(!!a.p.eliminated)-Number(!!b.p.eliminated))||(b.asked-a.asked));
-  const topAsker=[...stats].sort((a,b)=>b.asked-a.asked)[0];
-  const elim=players.filter(p=>p.eliminated);
 
   const PlayerList=()=>(
     <ul className="space-y-2">{players.map(p=>(
       <li key={p.id} className={`flex items-center gap-3 rounded-lg border border-gold/15 bg-ink px-3 py-2 ${p.eliminated?"opacity-50 line-through":""}`}>
-        <Portrait c={p.character} size={32}/><span className="flex-1">{p.name}{p.id===uid&&" (tú)"}{p.id===room.host_id&&" ♛"}</span>
+        <Dot c={p.character}/><span className="flex-1">{p.name}{p.id===uid&&" (tú)"}{p.id===room.host_id&&" ♛"}</span>
         <span className="text-xs text-stone-500">{p.character}</span>
         {isHost&&lobby&&p.id!==uid&&<button className="px-2 text-red-400" title="Expulsar" disabled={busy} onClick={()=>act("/api/kick",{playerId:p.id})}>✕</button>}
       </li>))}</ul>
@@ -158,13 +157,21 @@ export default function Sala(){
     </div>
   );
 
+  const mins=(a,b)=>Math.max(0,Math.round((new Date(b)-new Date(a))/60000));
+  const fin=room.status==="finished";
+  const duration=fin&&room.started_at&&room.finished_at?mins(room.started_at,room.finished_at):null;
+  const askedBy=players.map(p=>({p,n:qs.filter(q=>q.from_id===p.id).length})).sort((a,b)=>b.n-a.n);
+  const board=[...players].sort((a,b)=>(b.wins||0)-(a.wins||0));
+  const boardCard=players.some(p=>(p.wins||0)>0)?(
+    <div className="card space-y-2"><h2 className="font-serif text-lg text-gold">Marcador</h2>
+      {board.map(p=><div key={p.id} className="flex items-center gap-2"><Portrait c={p.character} size={24}/><span className="flex-1">{p.name}</span><span className="text-gold">{p.wins||0}</span></div>)}</div>):null;
   return(
     <main className={`mx-auto px-4 py-5 pb-24 ${tab==="libreta"?"max-w-2xl":"max-w-md"} fade`}>
       <header className="mb-4 flex items-center justify-between">
         <h1 className="font-serif text-2xl font-bold tracking-widest text-gold">THE MYSTERY</h1>
         <div className="flex items-center gap-2">
-          <button className={`text-lg ${sfx?"":"opacity-40"}`} title="Sonidos y vibración" onClick={toggleSfx}>{sfx?"🔊":"🔇"}</button>
-          <button className={`text-lg ${music?"":"opacity-40"}`} title="Música de fondo" onClick={toggleMusic}>🎵</button>
+          <button title="Sonidos" className="text-lg" onClick={()=>{const v=!sound;setSound(v);try{localStorage.setItem("tm_sound",v?"1":"0");}catch{}unlock();}}>{sound?"🔊":"🔇"}</button>
+          <button title="Música de fondo" className="text-lg" onClick={()=>{if(music){musicOff();setMusic(false);}else{musicOn();setMusic(true);}}}><span className={music?"":"opacity-40"}>🎵</span></button>
           <span className="rounded border border-gold/40 px-2 py-1 text-sm tracking-widest text-gold">{code}</span>
         </div>
       </header>
@@ -176,7 +183,7 @@ export default function Sala(){
           <h2 className="font-serif text-xl text-gold">Únete a la investigación</h2>
           <input className="inp" maxLength={20} placeholder="Tu nombre" value={name} onChange={e=>setName(e.target.value)}/>
           <div className="grid grid-cols-2 gap-2">{SUSPECTS.map(s=>(
-            <button key={s} disabled={taken.includes(s)} onClick={()=>setChr(s)} className={`flex items-center gap-2 rounded-lg border px-2 py-3 text-left text-sm transition disabled:opacity-30 ${chr===s?"border-gold bg-gold/15":"border-gold/20"}`}><Portrait c={s} size={28}/>{s}</button>))}</div>
+            <button key={s} disabled={taken.includes(s)} onClick={()=>setChr(s)} className={`flex items-center gap-2 rounded-lg border px-2 py-3 text-left text-sm transition disabled:opacity-30 ${chr===s?"border-gold bg-gold/15":"border-gold/20"}`}><Dot c={s}/>{s}</button>))}</div>
           <button className="btn" disabled={busy||!name.trim()||!chr} onClick={join}>Entrar a la sala</button>
         </div>
       ):<div className="card text-center">La partida ya comenzó y no admite más jugadores.</div>)}
@@ -185,6 +192,7 @@ export default function Sala(){
         <div className="space-y-5">
           <div className="card"><Qr/></div>
           <div className="card space-y-3"><h2 className="font-serif text-lg text-gold">Detectives en la sala ({players.length})</h2><PlayerList/></div>
+          {boardCard}
           <div className="card space-y-3">
             <h2 className="font-serif text-lg text-gold">Sobre del misterio</h2>
             {room.has_envelope?<p className="text-green-400">✓ Sobre listo. Las 3 cartas ya se guardaron en secreto.</p>
@@ -200,19 +208,13 @@ export default function Sala(){
 
       {me&&!lobby&&(<>
         <nav className="mb-4 grid grid-cols-3 gap-2">{[["sala","Sala"],["libreta","Libreta"],["preguntas","Preguntas"]].map(([k,l])=>(
-          <button key={k} onClick={()=>{play("tap");setTab(k);}} className={`rounded-lg py-2 font-serif text-sm transition ${tab===k?"bg-wine text-gold":"border border-gold/20 text-stone-400"}`}>{l}{k==="preguntas"&&inbox?" ●":""}</button>))}</nav>
+          <button key={k} onClick={()=>setTab(k)} className={`rounded-lg py-2 font-serif text-sm transition ${tab===k?"bg-wine text-gold":"border border-gold/20 text-stone-400"}`}>{l}{k==="preguntas"&&inbox?" ●":""}</button>))}</nav>
 
         {tab==="sala"&&(
           <div className="space-y-5">
-            <div className="card space-y-3"><h2 className="font-serif text-lg text-gold">Marcador</h2>
-              <ul className="space-y-2">{ranked.map(({p,asked,got},i)=>(
-                <li key={p.id} className={`flex items-center gap-3 rounded-lg border border-gold/15 bg-ink px-3 py-2 ${p.eliminated?"opacity-50":""}`}>
-                  <span className="w-4 text-center font-serif text-gold">{i+1}</span>
-                  <Portrait c={p.character} size={36}/>
-                  <div className="flex-1 text-sm"><p>{p.name}{p.id===uid&&" (tú)"}{p.id===room.host_id&&" ♛"}</p><p className="text-xs text-stone-500">{asked} preguntas · {got} respuestas dadas</p></div>
-                  <span className={`text-xs ${p.eliminated?"text-red-400":"text-green-400"}`}>{p.eliminated?"Eliminado":"En juego"}</span>
-                </li>))}</ul></div>
+            <div className="card space-y-3"><h2 className="font-serif text-lg text-gold">Jugadores</h2><PlayerList/></div>
             <details className="card"><summary className="cursor-pointer text-gold">Invitar con QR</summary><div className="mt-4"><Qr/></div></details>
+            {boardCard}
             <button className="btn" disabled={me.eliminated||room.status!=="playing"} onClick={()=>setAcc(EMPTY)}>{me.eliminated?"Estás eliminado":"Acusación final"}</button>
           </div>)}
 
@@ -222,7 +224,7 @@ export default function Sala(){
               <h2 className="font-serif text-lg text-gold">Hacer una pregunta</h2>
               <select className="inp" value={askTo} onChange={e=>setAskTo(e.target.value)}><option value="">¿A quién?…</option>{others.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
               <Triple v={askCards} set={setAskCards}/>
-              <button className="btn" disabled={busy||!askTo||!full(askCards)||pending||room.status!=="playing"} onClick={()=>act("/api/ask",{toId:askTo,...askCards},()=>{play("ask");setAskCards(EMPTY);setAskTo("");})}>{pending?"Hay una pregunta sin responder":"Preguntar"}</button>
+              <button className="btn" disabled={busy||!askTo||!full(askCards)||pending||room.status!=="playing"} onClick={()=>act("/api/ask",{toId:askTo,...askCards},()=>{setAskCards(EMPTY);setAskTo("");})}>{pending?"Hay una pregunta sin responder":"Preguntar"}</button>
               <p className="text-xs text-stone-500">Hazla también en voz alta. Solo tú verás el texto de la respuesta.</p>
             </div>
             <div className="card space-y-3"><h2 className="font-serif text-lg text-gold">Historial</h2>
@@ -244,7 +246,7 @@ export default function Sala(){
               <table className="w-full border-collapse text-sm">
                 <thead><tr className="bg-coal">
                   <th className="sticky left-0 z-10 bg-coal p-2 text-left font-serif text-gold">Carta</th>
-                  {players.map(p=><th key={p.id} className="p-1 text-[11px] font-medium" style={{color:COLORS[p.character]}}>{p.id===uid?"Yo":p.name.slice(0,7)}</th>)}
+                  {players.map(p=><th key={p.id} className="p-1 text-[11px] font-medium" style={{color:COLORS[p.character]}}><div className="flex flex-col items-center gap-0.5"><Portrait c={p.character} size={22}/>{p.id===uid?"Yo":p.name.slice(0,7)}</div></th>)}
                   <th className="p-2 text-left font-serif text-gold">Notas</th></tr></thead>
                 <tbody>{CATS.map(([cat,items])=>(
                   <Fragment key={cat}>
@@ -254,7 +256,7 @@ export default function Sala(){
                         <td className="sticky left-0 z-10 w-28 bg-ink p-2 text-xs">{it}</td>
                         {players.map(p=>{
                           const k=`${it}|${p.id}`;const v=notes.c[k]||0;
-                          return <td key={p.id} className="text-center"><button onClick={()=>{play("mark");upd(n=>({...n,c:{...n.c,[k]:((n.c[k]||0)+1)%4}}));}} className={`h-11 w-11 text-xl transition active:scale-90 ${MC[v]}`}>{MARKS[v]}</button></td>;
+                          return <td key={p.id} className="text-center"><button onClick={()=>upd(n=>({...n,c:{...n.c,[k]:((n.c[k]||0)+1)%4}}))} className={`h-11 w-11 text-xl transition active:scale-90 ${MC[v]}`}>{MARKS[v]}</button></td>;
                         })}
                         <td className="p-1"><input className="w-28 min-w-[7rem] rounded border border-gold/10 bg-ink px-2 py-1 text-xs outline-none focus:border-gold" value={notes.t[it]||""} onChange={e=>upd(n=>({...n,t:{...n.t,[it]:e.target.value}}))}/></td>
                       </tr>))}
@@ -296,7 +298,7 @@ export default function Sala(){
               <button className="btn2 !px-2 !py-2 text-sm" onClick={()=>setReply("No tengo ninguna")}>No tengo ninguna</button>
             </div>
             <input className="inp" maxLength={200} placeholder="Escribe tu respuesta" value={reply} onChange={e=>setReply(e.target.value)}/>
-            <button className="btn" disabled={busy||!reply.trim()} onClick={()=>act("/api/answer",{questionId:inbox.id,text:reply},()=>{play("send");setReply("");})}>Enviar respuesta</button>
+            <button className="btn" disabled={busy||!reply.trim()} onClick={()=>act("/api/answer",{questionId:inbox.id,text:reply},()=>setReply(""))}>Enviar respuesta</button>
           </div>
         </div>)}
 
@@ -307,23 +309,23 @@ export default function Sala(){
         </div>)}
 
       {room.status==="finished"&&(
-        <div className="fixed inset-0 z-[60] flex overflow-y-auto bg-ink/95 p-6 text-center">
+        <div className="fixed inset-0 z-[60] overflow-y-auto bg-ink/95">
           {room.winner_name&&<Confetti/>}
-          <div className="relative m-auto flex w-full flex-col items-center gap-5">
-          <h2 className="font-serif text-4xl font-bold text-gold fade">{room.winner_name?"¡CASO RESUELTO!":"CASO SIN RESOLVER"}</h2>
-          {room.winner_name&&<p className="text-xl">{room.winner_name}</p>}
-          {room.solution&&<div className="card flex flex-col items-center gap-2 text-lg"><Portrait c={room.solution.suspect} size={64}/><p>{room.solution.suspect}<br/>con {room.solution.weapon}<br/>en {room.solution.room}</p></div>}
-          <div className="card w-full max-w-xs space-y-2 text-left text-sm">
-            <h3 className="font-serif text-gold">Resumen de la partida</h3>
-            <p>Preguntas hechas: <b>{qs.length}</b></p>
-            {topAsker&&topAsker.asked>0&&<p>Detective más curioso: <b>{topAsker.p.name}</b> ({topAsker.asked})</p>}
-            <p>Eliminados: <b>{elim.length?elim.map(p=>p.name).join(", "):"nadie"}</b></p>
-            <ul className="space-y-1 border-t border-gold/15 pt-2">{ranked.map(({p,asked})=>(
-              <li key={p.id} className="flex items-center gap-2"><Portrait c={p.character} size={24}/><span className="flex-1">{p.name}{room.winner_name===p.name&&" 🏆"}</span><span className="text-xs text-stone-400">{asked} preg.</span></li>))}</ul>
-          </div>
-          {isHost?<button className="btn max-w-xs" disabled={busy} onClick={()=>act("/api/rematch")}>Revancha con los mismos jugadores</button>
-            :<p className="text-sm text-stone-400">Esperando a que el anfitrión inicie la revancha…</p>}
-          <button className="btn2 max-w-xs" onClick={()=>router.push("/")}>Volver al inicio</button>
+          <div className="flex min-h-full flex-col items-center justify-center gap-4 p-6 text-center">
+            <h2 className="font-serif text-4xl font-bold text-gold fade">{room.winner_name?"¡CASO RESUELTO!":"CASO SIN RESOLVER"}</h2>
+            {room.winner_name&&<p className="text-xl">{room.winner_name}</p>}
+            {room.solution&&<div className="card text-lg">{room.solution.suspect}<br/>con {room.solution.weapon}<br/>en {room.solution.room}</div>}
+            <div className="card w-full max-w-sm space-y-2 text-left text-sm">
+              <h3 className="font-serif text-lg text-gold">Resumen</h3>
+              {duration!==null&&<p>Duración: {duration} min</p>}
+              <p>Preguntas hechas: {askedBy.map(x=>`${x.p.name} ${x.n}`).join(" · ")}</p>
+              {players.some(p=>p.eliminated_at)&&<p>Eliminados: {players.filter(p=>p.eliminated_at).map(p=>`${p.name} (min ${room.started_at?mins(room.started_at,p.eliminated_at):"?"})`).join(" · ")}</p>}
+            </div>
+            <div className="card w-full max-w-sm space-y-2 text-left"><h3 className="font-serif text-lg text-gold">Marcador</h3>
+              {board.map(p=><div key={p.id} className="flex items-center gap-2"><Portrait c={p.character} size={24}/><span className="flex-1">{p.name}</span><span className="text-gold">{p.wins||0}</span></div>)}</div>
+            {isHost?<button className="btn max-w-xs" disabled={busy} onClick={()=>act("/api/rematch")}>Revancha con los mismos jugadores</button>
+              :<p className="text-sm text-stone-400">Esperando a que el anfitrión inicie la revancha…</p>}
+            <button className="btn2 max-w-xs" onClick={()=>router.push("/")}>Volver al inicio</button>
           </div>
         </div>)}
 
